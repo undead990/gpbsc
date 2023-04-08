@@ -1,0 +1,59 @@
+def buy_token_on_pancakeswap(token_address, retry_attempts=1):
+    token_address = Web3.toChecksumAddress(token_address)
+    attempt = 0
+    success = False
+    while attempt < retry_attempts and not success:
+        try:
+            w3, account = connect_to_bsc(PRIVATE_KEY)
+
+            router_address = Web3.toChecksumAddress('0x10ED43C718714eb63d5aA57B78B54704E256024E')  # PancakeSwap Router v2
+
+            # Define the amounts for buying and approving
+            amount_to_buy = Web3.toWei(BNB_AMOUNT, 'ether')
+            amount_to_approve = Web3.toWei(1000000000, 'ether')
+            slippage = 10
+
+            # Approve the Router to spend the user's tokens
+            approve_token(w3, account, token_address, router_address, amount_to_approve)
+
+            # Perform a swap on PancakeSwap
+            input_token_address = Web3.toChecksumAddress('0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c')  # WBNB
+            amount_out_min = 0.0  # Set this to the desired minimum output amount accounting for slippage
+
+            # Call the swap_tokens() function and get the transaction hash
+            txn_hash = swap_tokens(w3, account, input_token_address, token_address, amount_to_buy, amount_out_min, router_address, slippage)
+
+            # Get the token symbol
+            token_contract = w3.eth.contract(address=token_address, abi=ERC20_ABI)
+            try:
+                symbol = token_contract.functions.symbol().call()
+            except Exception as ex:
+                logger.error(f"Error while trying to get the token symbol: {ex}")
+                symbol = "unknown"
+
+            # Check if the purchase was successful
+            user_balance = token_contract.functions.balanceOf(account.address).call()
+            if user_balance > 0:
+                # Get the total supply of the token
+                total_supply = token_contract.functions.totalSupply().call()
+
+                # Calculate the percentage of tokens owned by the user
+                percentage_owned = user_balance / total_supply * 100
+
+                # Get the token price
+                price = get_token_price_graphql(token_address)
+
+                logger.info(f'Bought token {symbol} at address {token_address}. You now own {percentage_owned:.2f}% of the total supply. Current price is {price:.8f} BNB.')
+                success = True
+            else:
+                message = f"Failed to buy the token {symbol} at address {token_address}. Retrying..."
+                logger.warning(message)
+                requests.post(TELEGRAM_API_URL, data={'chat_id': TELEGRAM_CHAT_ID, 'text': message})
+                attempt += 1
+                time.sleep(3)
+        except Exception as e:
+            message = f"Error while trying to buy the token {symbol} at address {token_address}: {e}"
+            logger.error(message)
+            requests.post(TELEGRAM_API_URL, data={'chat_id': TELEGRAM_CHAT_ID, 'text': message})
+            attempt += 1
+            time.sleep(3)
